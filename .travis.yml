@@ -1,11 +1,17 @@
-language: bash
-  
+os:linux
+language: go
+
 sudo: required
 
 services:
   - docker
-
+  addons:
+    apt:
+      packages:
+      - docker-ce
+      - curl
 script:
-  - echo "Hello World!"
+  - echo "Hello World"
+  - make build
   
 

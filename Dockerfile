@@ -1,15 +1,14 @@
-# Create an image for the weather-app using multi-stage build
-FROM node AS build
-RUN mkdir -p /var/node/
-ADD src/ /var/node/
-WORKDIR /var/node
-RUN npm install
+FROM golang:latest
 
-FROM node:alpine
-ARG VERSION=V1.1
-LABEL org.label-schema.version=$VERSION
-ENV NODE_ENV="production"
-COPY --from=build /var/node /var/node
-WORKDIR /var/node
-EXPOSE 3000
-ENTRYPOINT ["./bin/www"]
+RUN mkdir /build
+WORKDIR /build
+
+RUN export GO111MODULE=on 
+RUN go get github.com/AdminTurnedDevOps/GoWebAPI/main
+RUN cd /build && git clone https://github.com/AdminTurnedDevOps/GoWebAPI.git
+
+RUN cd /build/GoWebAPI/main && go build
+
+EXPOSE 8080
+
+ENTRYPOINT [ "/build/GoWebAPI/main/main" ]
