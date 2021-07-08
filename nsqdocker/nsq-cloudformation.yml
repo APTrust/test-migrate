@@ -1,0 +1,609 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  CloudMap:
+    Properties:
+      Description: Service Map for Docker Compose project nsqdocker
+      Name: nsqdocker.local
+      Vpc: vpc-4bd09e2c
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+  Cluster:
+    Properties:
+      ClusterName: nsqdocker
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+    Type: AWS::ECS::Cluster
+  Default4150Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: nsqd:4150/tcp on default network
+      FromPort: 4150
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: TCP
+      ToPort: 4150
+    Type: AWS::EC2::SecurityGroupIngress
+  Default4151Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: nsqd:4151/tcp on default network
+      FromPort: 4151
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: TCP
+      ToPort: 4151
+    Type: AWS::EC2::SecurityGroupIngress
+  Default4160Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: nsqlookupd:4160/tcp on default network
+      FromPort: 4160
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: TCP
+      ToPort: 4160
+    Type: AWS::EC2::SecurityGroupIngress
+  Default4161Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: nsqlookupd:4161/tcp on default network
+      FromPort: 4161
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: TCP
+      ToPort: 4161
+    Type: AWS::EC2::SecurityGroupIngress
+  Default4171Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: nsqadmin:4171/tcp on default network
+      FromPort: 4171
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: TCP
+      ToPort: 4171
+    Type: AWS::EC2::SecurityGroupIngress
+  DefaultNetwork:
+    Properties:
+      GroupDescription: nsqdocker Security Group for default network
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.network
+        Value: nsqdocker_default
+      VpcId: vpc-4bd09e2c
+    Type: AWS::EC2::SecurityGroup
+  DefaultNetworkIngress:
+    Properties:
+      Description: Allow communication within network default
+      GroupId:
+        Ref: DefaultNetwork
+      IpProtocol: "-1"
+      SourceSecurityGroupId:
+        Ref: DefaultNetwork
+    Type: AWS::EC2::SecurityGroupIngress
+  LoadBalancer:
+    Properties:
+      LoadBalancerAttributes:
+      - Key: load_balancing.cross_zone.enabled
+        Value: "true"
+      Scheme: internet-facing
+      Subnets:
+      - subnet-316bbe78
+      - subnet-a53ee38b
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      Type: network
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  LogGroup:
+    Properties:
+      LogGroupName: /docker-compose/nsqdocker
+    Type: AWS::Logs::LogGroup
+  NsqadminService:
+    DependsOn:
+    - NsqadminTCP4171Listener
+    - NsqlookupdService
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: nsqadmin
+        ContainerPort: 4171
+        TargetGroupArn:
+          Ref: NsqadminTCP4171TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: DefaultNetwork
+          Subnets:
+          - subnet-316bbe78
+          - subnet-a53ee38b
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - NsqadminServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqadmin
+      TaskDefinition:
+        Ref: NsqadminTaskDefinition
+    Type: AWS::ECS::Service
+  NsqadminServiceDiscoveryEntry:
+    Properties:
+      Description: '"nsqadmin" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: nsqadmin
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+  NsqadminTCP4171Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: NsqadminTCP4171TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 4171
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NsqadminTCP4171TargetGroup:
+    Properties:
+      Port: 4171
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      TargetType: ip
+      VpcId: vpc-4bd09e2c
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  NsqadminTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-east-1.compute.internal
+        - nsqdocker.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: ec2-tutorial
+            awslogs-region: us-east-1
+            awslogs-stream-prefix: nsq
+        Name: Nsqadmin_ResolvConf_InitContainer
+      - Command:
+        - /nsqadmin
+        - --lookupd-http-address=nsqlookupd:4161
+        DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Nsqadmin_ResolvConf_InitContainer
+        Essential: true
+        Image: docker.io/nsqio/nsq:latest@sha256:78b986254986c4ae1237b32219a83c5a23354a6c30c18817597f776a4edcac41
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: ec2-tutorial
+            awslogs-region: us-east-1
+            awslogs-stream-prefix: nsq
+        Name: nsqadmin
+        PortMappings:
+        - ContainerPort: 4171
+          HostPort: 4171
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: NsqadminTaskExecutionRole
+      Family: nsqdocker-nsqadmin
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+  NsqadminTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqadmin
+    Type: AWS::IAM::Role
+  NsqdService:
+    DependsOn:
+    - NsqdTCP4150Listener
+    - NsqdTCP4151Listener
+    - NsqlookupdService
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: nsqd
+        ContainerPort: 4150
+        TargetGroupArn:
+          Ref: NsqdTCP4150TargetGroup
+      - ContainerName: nsqd
+        ContainerPort: 4151
+        TargetGroupArn:
+          Ref: NsqdTCP4151TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: DefaultNetwork
+          Subnets:
+          - subnet-316bbe78
+          - subnet-a53ee38b
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - NsqdServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqd
+      TaskDefinition:
+        Ref: NsqdTaskDefinition
+    Type: AWS::ECS::Service
+  NsqdServiceDiscoveryEntry:
+    Properties:
+      Description: '"nsqd" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: nsqd
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+  NsqdTCP4150Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: NsqdTCP4150TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 4150
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NsqdTCP4150TargetGroup:
+    Properties:
+      Port: 4150
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      TargetType: ip
+      VpcId: vpc-4bd09e2c
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  NsqdTCP4151Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: NsqdTCP4151TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 4151
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NsqdTCP4151TargetGroup:
+    Properties:
+      Port: 4151
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      TargetType: ip
+      VpcId: vpc-4bd09e2c
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  NsqdTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-east-1.compute.internal
+        - nsqdocker.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: nsqdocker
+        Name: Nsqd_ResolvConf_InitContainer
+      - Command:
+        - /nsqd
+        - --lookupd-tcp-address=nsqlookupd:4160
+        DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Nsqd_ResolvConf_InitContainer
+        Essential: true
+        Image: docker.io/nsqio/nsq:latest@sha256:78b986254986c4ae1237b32219a83c5a23354a6c30c18817597f776a4edcac41
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: nsqdocker
+        Name: nsqd
+        PortMappings:
+        - ContainerPort: 4150
+          HostPort: 4150
+          Protocol: tcp
+        - ContainerPort: 4151
+          HostPort: 4151
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: NsqdTaskExecutionRole
+      Family: nsqdocker-nsqd
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+  NsqdTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqd
+    Type: AWS::IAM::Role
+  NsqlookupdService:
+    DependsOn:
+    - NsqlookupdTCP4160Listener
+    - NsqlookupdTCP4161Listener
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: nsqlookupd
+        ContainerPort: 4160
+        TargetGroupArn:
+          Ref: NsqlookupdTCP4160TargetGroup
+      - ContainerName: nsqlookupd
+        ContainerPort: 4161
+        TargetGroupArn:
+          Ref: NsqlookupdTCP4161TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: DefaultNetwork
+          Subnets:
+          - subnet-316bbe78
+          - subnet-a53ee38b
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - NsqlookupdServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqlookupd
+      TaskDefinition:
+        Ref: NsqlookupdTaskDefinition
+    Type: AWS::ECS::Service
+  NsqlookupdServiceDiscoveryEntry:
+    Properties:
+      Description: '"nsqlookupd" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: nsqlookupd
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+  NsqlookupdTCP4160Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: NsqlookupdTCP4160TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 4160
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NsqlookupdTCP4160TargetGroup:
+    Properties:
+      Port: 4160
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      TargetType: ip
+      VpcId: vpc-4bd09e2c
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  NsqlookupdTCP4161Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: NsqlookupdTCP4161TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 4161
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  NsqlookupdTCP4161TargetGroup:
+    Properties:
+      Port: 4161
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      TargetType: ip
+      VpcId: vpc-4bd09e2c
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  NsqlookupdTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-east-1.compute.internal
+        - nsqdocker.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: nsqdocker
+        Name: Nsqlookupd_ResolvConf_InitContainer
+      - Command:
+        - /nsqlookupd
+        DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Nsqlookupd_ResolvConf_InitContainer
+        Essential: true
+        Image: docker.io/nsqio/nsq:latest@sha256:78b986254986c4ae1237b32219a83c5a23354a6c30c18817597f776a4edcac41
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: nsqdocker
+        Name: nsqlookupd
+        PortMappings:
+        - ContainerPort: 4160
+          HostPort: 4160
+          Protocol: tcp
+        - ContainerPort: 4161
+          HostPort: 4161
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: NsqlookupdTaskExecutionRole
+      Family: nsqdocker-nsqlookupd
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+  NsqlookupdTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: nsqdocker
+      - Key: com.docker.compose.service
+        Value: nsqlookupd
+    Type: AWS::IAM::Role
+
